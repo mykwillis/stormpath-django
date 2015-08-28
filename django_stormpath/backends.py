@@ -4,7 +4,9 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.contrib.auth.backends import ModelBackend
 from django.contrib.auth.models import Group
+from stormpath.api_auth import ApiRequestAuthenticator
 from stormpath.error import Error
+import base64
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +94,44 @@ class StormpathBackend(ModelBackend):
             UserModel = get_user_model()
             username = kwargs.get(UserModel.USERNAME_FIELD)
         account = self._stormpath_authenticate(username, password)
+        if account is None:
+            return None
+        return self._create_or_get_user(account)
+
+
+class StormpathApiBackend(StormpathBackend):
+    """Allows the use of API keys for user authentication"""
+    def _stormpath_api_authenticate(self, username, password):
+        APPLICATION = get_application()
+        authenticator = ApiRequestAuthenticator(APPLICATION)
+        try:
+            value = username + ':' + password
+            value = base64.b64encode(value.encode('utf-8')).decode('ascii')
+            headers = {
+                'Authorization': 'Basic ' + value
+            }
+            result = authenticator.authenticate(headers)
+            return result.account
+        except Error as e:
+            log.debug(e)
+            return None
+
+    def authenticate(self, username=None, password=None, **kwargs):
+        """The authenticate method takes credentials as keyword arguments,
+        usually username/email and password.
+
+        Returns a user model if the Stormpath authentication was successful or
+        None otherwise. It expects three variable to be defined in Django
+        settings: \n
+            STORMPATH_ID = "apiKeyId" \n
+            STORMPATH_SECRET = "apiKeySecret" \n
+            STORMPATH_APPLICATION =
+            "https://api.stormpath.com/v1/applications/APP_UID"
+        """
+        if username is None:
+            UserModel = get_user_model()
+            username = kwargs.get(UserModel.USERNAME_FIELD)
+        account = self._stormpath_api_authenticate(username, password)
         if account is None:
             return None
         return self._create_or_get_user(account)
